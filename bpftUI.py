@@ -9,11 +9,30 @@ import sys
 import re
 # noinspection PyCompatibility
 from tkinter import *
-
+from datetime import date
 import requests
 import urllib3
 from retrying import retry
-
+from dao.BaseRepository import BaseRepository
+import pymongo
+baseRep = BaseRepository(collectionname="xdgame")
+from config.dir_config import LOG_DIR
+import logging
+import datetime
+logger = logging.getLogger(__name__)
+logger.setLevel(level=logging.DEBUG)
+handler = logging.FileHandler(
+    filename=os.path.join(LOG_DIR, str(datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")) + ".log"), mode="w",
+    encoding="utf-8")
+handler.setLevel(logging.DEBUG)
+handler2 = logging.StreamHandler()
+handler2.setLevel(logging.DEBUG)
+formatter = logging.Formatter(
+    '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+handler2.setFormatter(formatter)
+logger.addHandler(handler)
+logger.addHandler(handler2)
 '''
 软件名: BaiduPanFilesTransfers
 版本: 1.12.1
@@ -45,7 +64,11 @@ Label(root, text='2.下面填入浏览器User-Agent').grid(row=3, column=0, stic
 entry_ua = Entry(root, width=48, )
 entry_ua.grid(row=4, column=0, sticky=W, padx=4)
 Label(root, text='3.下面填入文件保存位置(默认根目录),不能包含<,>,|,*,?,,/').grid(row=5, column=0, sticky=W)
-entry_folder_name = Entry(root, width=48, )
+addr = StringVar()
+today = date.today().strftime("%Y%m%d")
+addr.set(f'games{today}')
+entry_folder_name = Entry(root, width=48, textvariable=addr)
+
 entry_folder_name.grid(row=6, column=0, sticky=W, padx=4)
 Label(root, text='4.下面粘贴链接,每行一个,格式为:链接 提取码.支持秒传格式.').grid(row=7, sticky=W)
 
@@ -68,6 +91,10 @@ text_logs.configure(yscrollcommand=scrollbar_logs.set)
 # 定义按钮和状态标签
 bottom_run = Button(root, text='4.点击运行', command=lambda: thread_it(main, ), width=10, height=1, relief='solid')
 bottom_run.grid(row=9, pady=6, sticky=W, padx=4)
+
+bottom_run = Button(root, text='5.读取数据库', command=lambda: thread_it(read_mongodb, ), width=10, height=1, relief='solid')
+bottom_run.grid(row=9)
+
 label_state = Label(root, text='检查新版', font=('Arial', 9, 'underline'), foreground="#0000ff", cursor='heart')
 label_state.grid(row=9, sticky=E, padx=4)
 label_state.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/hxz393/BaiduPanFilesTransfers", new=0))
@@ -78,6 +105,7 @@ if os.path.exists('config.ini'):
         [config_cookie, config_user_agent] = config_read.readlines()
     entry_cookie.insert(0, config_cookie)
     entry_ua.insert(0, config_user_agent)
+    
 
 # 公共请求头
 request_header = {
@@ -197,7 +225,15 @@ def transfer_files_rapid(rapid_data, dir_name, bdstoken):
         return transfer_files_rapid(rapid_data, dir_name, bdstoken)
     request_header['User-Agent'] = user_agent
     return response.json()['errno']
-
+def read_mongodb():
+     results, nums, _ = baseRep.get_all_no_page(sort=["_id",pymongo.DESCENDING])
+     print(nums)
+     print(results[:10])
+     links=[]
+     for r in results[:10]:
+         links.append(r.get("pan_link"))
+     text_links.insert(END,"\n".join(links))
+    
 
 # 状态标签变化函数
 def label_state_change(state, task_count=0, task_total_count=0):
@@ -271,6 +307,7 @@ def main():
 
         # 执行转存
         for url_code in link_list:
+            time.sleep(10)
             # 处理http链接
             url_code = url_code.replace("http://", "https://")
             # 处理(https://pan.baidu.com/s/1tU58ChMSPmx4e3-kDx1mLg?pwd=123w)格式链接
@@ -279,12 +316,15 @@ def main():
             url_code = url_code.replace("https://pan.baidu.com/share/init?surl=", "https://pan.baidu.com/s/1")
             # 判断连接类型
             link_type = check_link_type(url_code)
+            logger.debug(url_code)
+            logger.debug(f"转存类型{link_type}")
             # 处理(https://pan.baidu.com/s/1tU58ChMSPmx4e3-kDx1mLg 123w)格式链接
             if link_type == '/s/':
                 link_url_org, pass_code_org = re.sub(r'提取码*[：:](.*)', r'\1', url_code.lstrip()).split(' ', maxsplit=1)
                 [link_url, pass_code] = [link_url_org.strip()[:47], pass_code_org.strip()[:4]]
                 # 执行检查链接有效性
                 check_links_reason = check_links(link_url, pass_code, bdstoken)
+                logger.debug(f"失败原因{check_links_reason}")
                 if check_links_reason == 1:
                     text_logs.insert(END, '链接失效,没获取到shareid:' + url_code + '\n')
                 elif check_links_reason == 2:
